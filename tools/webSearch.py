@@ -2,7 +2,7 @@
 tools/webSearch.py — P3: Web & Information Tools
 
 Three tools live here:
-    searchWeb        general web lookup  (opens browser + Tavily summary)
+    searchWeb        general web lookup  (summary; browser only if asked)
     searchYoutube    video lookup        (opens browser)
     searchWikipedia  factual lookup      (text answer, no browser)
 
@@ -103,8 +103,7 @@ def _clean(text: str, limit: int = MAX_SUMMARY_CHARS) -> str:
 
     The character swap matters on Windows: a default cp1252 terminal raises
     UnicodeEncodeError on a curly quote or an en dash, which crashes the
-    print() in main.py rather than my tool. See the note at the bottom of
-    this file for the proper fix P6 should apply.
+    print() in main.py rather than my tool.
     """
     if not text:
         return ""
@@ -130,6 +129,15 @@ def _validQuery(query) -> str:
     if len(query) > 300:
         query = query[:300]
     return query
+
+
+def _asBool(value) -> bool:
+    """Models sometimes send booleans as the strings 'true'/'false'."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, str):
+        return value.strip().lower() in ("true", "1", "yes", "y")
+    return bool(value)
 
 
 def _browserEnabled() -> bool:
@@ -238,42 +246,48 @@ def _tavilySummary(query: str):
 
 # ------------------------------------------------------------------ tools
 
-def searchWeb(query: str) -> str:
-    """Search the live web for facts, news, prices or current information, open the results in the browser, and return a short summary; use this for any "what is X", "who is Y" or "latest news about Z" question, but never for videos.
+def searchWeb(query: str, openInBrowser: bool = False) -> str:
+    """Search the live web and ANSWER the question directly with a short summary, for anything about current events, news, prices, what is happening somewhere, or facts that change over time; only open a browser tab if the user explicitly asks you to search, show, or open the results.
 
     Args:
         query: The search terms to look up on the web.
+        openInBrowser: Set true ONLY when the user asks to open, show or search in the browser, for example "search for X", "open a search for X" or "show me results for X". Leave false for ordinary questions like "what is happening in Mumbai" or "what is a neutron star", which just want an answer.
     """
     query = _validQuery(query)
     if not query:
         return "I need something to search for. What should I look up?"
 
+    wantsBrowser = _asBool(openInBrowser)
     searchUrl = "https://www.google.com/search?q=" + urllib.parse.quote(query)
-    opened = _openBrowser(searchUrl)
-    openedNote = "Opened the search in your browser. " if opened else ""
 
     cacheKey = "web:" + query.lower()
     cached = _cacheGet(cacheKey)
     if cached:
-        return openedNote + cached
+        if wantsBrowser and _openBrowser(searchUrl):
+            return "Opened the search in your browser. " + cached
+        return cached
 
     ok, text = _tavilySummary(query)
     if ok:
         _cacheSet(cacheKey, text)
-        return openedNote + text
+        if wantsBrowser and _openBrowser(searchUrl):
+            return "Opened the search in your browser. " + text
+        return text
 
-    # Every failure below still tells the user something true and useful.
+    # No summary available. Falling back to the browser is better than
+    # leaving the user with nothing, even if they didn't ask for a tab.
+    opened = _openBrowser(searchUrl)
     messages = {
-        "no key": "I don't have a search-summary key set up, so I can't read the results out - they're on screen.",
-        "bad key": "My search key was rejected, so I can only show the page, not summarise it.",
-        "rate limited": "The search service has hit its usage limit for now, so I can only show the page.",
-        "timeout": "The search service took too long to answer, so I can only show the page.",
-        "empty": "I couldn't find a clear answer for that, but the results are on screen.",
+        "no key": "I don't have a search-summary key set up",
+        "bad key": "my search key was rejected",
+        "rate limited": "the search service has hit its usage limit",
+        "timeout": "the search service took too long to answer",
+        "empty": "I couldn't find a clear answer for that",
     }
-    fallback = messages.get(text, "I couldn't fetch a summary just now, but the results are on screen.")
+    reason = messages.get(text, "I couldn't fetch a summary just now")
     if opened:
-        return "Opened a search for '" + query + "'. " + fallback
-    return "I couldn't open a browser here. " + fallback
+        return f"{reason}, so I've opened the results for '{query}' in your browser instead."
+    return f"{reason}, and I couldn't open a browser either. Try again in a moment."
 
 
 def searchYoutube(query: str) -> str:
@@ -377,7 +391,7 @@ if __name__ == "__main__":
     load_dotenv()
 
     # Don't spray browser tabs while testing.
-    os.environ.setdefault("NOVA_OPEN_BROWSER", "0")
+    os.environ["NOVA_OPEN_BROWSER"] = "0"
 
     print("TAVILY_API_KEY set:", bool(os.environ.get("TAVILY_API_KEY")))
     print("timeout:", _timeout())
@@ -386,8 +400,10 @@ if __name__ == "__main__":
     checks = [
         ("searchWikipedia", lambda: searchWikipedia("Alan Turing")),
         ("searchWikipedia (nonsense)", lambda: searchWikipedia("qwtzzzxk not a real page")),
-        ("searchWeb", lambda: searchWeb("current price of gold in india")),
+        ("searchWeb (summary only)", lambda: searchWeb("current price of gold in india")),
         ("searchWeb (cached)", lambda: searchWeb("current price of gold in india")),
+        ("searchWeb (browser asked)", lambda: searchWeb("mumbai news", True)),
+        ("searchWeb (string 'true')", lambda: searchWeb("mumbai news", "true")),
         ("searchYoutube", lambda: searchYoutube("lofi study music")),
         ("empty query", lambda: searchWeb("")),
         ("wrong type", lambda: searchWeb(None)),
