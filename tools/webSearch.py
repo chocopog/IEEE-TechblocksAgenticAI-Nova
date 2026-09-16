@@ -189,13 +189,7 @@ def _tavilySummary(query: str):
             "https://api.tavily.com/search",
             json=payload,
             headers=headers,
-            timeout=_timeout(),
-            json={
-                "api_key": api_key,
-                "query": query,
-                "max_results": 3,
-                "include_answer": True,
-            },
+            
             timeout=10,
         )
 
